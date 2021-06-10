@@ -10,7 +10,7 @@ import org.apache.james.gatling.jmap.draft.scenari.{JmapInboxHomeLoadingScenario
 import org.apache.james.gatling.jmap.draft.{CommonSteps, JmapMessages}
 import org.apache.james.gatling.jmap.rfc8621.JmapEmail.{nonEmptyListMessagesChecks, openpaasEmailQueryParameters, queryEmails}
 import org.apache.james.gatling.jmap.rfc8621.JmapHttp.{noError, statusOk}
-import org.apache.james.gatling.jmap.rfc8621.JmapWebsocket.{enablePush, websocketClose, websocketConnect}
+import org.apache.james.gatling.jmap.rfc8621.JmapWebsocket.{echoPingWs, enablePush, websocketClose, websocketConnect}
 import org.apache.james.gatling.jmap.rfc8621.scenari.PushPlatformValidationScenario.{accountId, draft, emailIds, emailState, inbox, mailboxState, messageIds, outbox, randomMailbox}
 import org.apache.james.gatling.jmap.rfc8621.{JmapEmail, JmapMailbox, SessionStep}
 
@@ -30,7 +30,8 @@ object PushPlatformValidationScenario {
 
 class PushPlatformValidationScenario(minMessagesInMailbox: Int,
                                      minWaitDelay: Duration = 20 seconds,
-                                     maxWaitDelay: Duration = 40 seconds) {
+                                     maxWaitDelay: Duration = 40 seconds,
+                                     pingInterval: Duration = 30 seconds) {
   val flagUpdate: ChainBuilder = randomSwitch(
     70.0 -> exec(JmapEmail.markAsSeen()),
     20.0 -> exec(JmapEmail.markAsAnswered()),
@@ -72,16 +73,20 @@ class PushPlatformValidationScenario(minMessagesInMailbox: Int,
       .exec(websocketConnect().onConnected(
         exec(enablePush)
           .during(duration) {
-            randomSwitch(
-              2.0 -> inboxHomeLoading.inboxHomeLoading,
-              8.0 -> selectArbitrary.selectArbitrary,
-              5.0 -> sendMessage(recipientFeeder),
-              30.0 -> openArbitrary.openArbitrary,
-              10.0 -> flagUpdate,
-              15.0 -> getNewState,
-              30.0 -> exec())
-              .asInstanceOf[ChainBuilder]
-              .pause(minWaitDelay, maxWaitDelay)
+            exec(
+              randomSwitch(
+                2.0 -> inboxHomeLoading.inboxHomeLoading,
+                8.0 -> selectArbitrary.selectArbitrary,
+                5.0 -> sendMessage(recipientFeeder),
+                30.0 -> openArbitrary.openArbitrary,
+                10.0 -> flagUpdate,
+                15.0 -> getNewState,
+                30.0 -> exec())
+                .asInstanceOf[ChainBuilder]
+                .pause(minWaitDelay, maxWaitDelay),
+
+              exec(echoPingWs)
+                .pause(pingInterval))
           }))
       .exec(websocketClose())
   }
