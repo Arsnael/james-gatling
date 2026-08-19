@@ -2,7 +2,7 @@ import sbt.Keys.libraryDependencies
 
 import scala.collection.Seq
 
-ThisBuild / resolvers := Seq(Resolver.mavenCentral)
+ThisBuild / externalResolvers := Seq(Resolver.mavenCentral)
 
 lazy val root = (project in file("."))
     .settings(
