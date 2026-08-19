@@ -1,55 +1,68 @@
 package org.apache.james.gatling.smtp
 
-import akka.actor.{Actor, Props}
-import io.gatling.core.action.{Action, ChainableAction}
-import io.gatling.core.session.Session
+import javax.mail.internet.InternetAddress
+
+import courier.{Envelope, Mailer, Text}
+import io.gatling.commons.stats.{KO, OK}
+import io.gatling.commons.util.Clock
+import io.gatling.commons.validation.Validation
+import io.gatling.core.action.{Action, RequestAction}
+import io.gatling.core.session.{Expression, Session}
 import io.gatling.core.stats.StatsEngine
 import org.apache.james.gatling.control.UserFeeder
 
-object SmtpAction {
-  def props(requestName: String, subject: String, body: String, statsEngine: StatsEngine, next: Action, protocol: SmtpProtocol) =
-    Props(new SmtpAction(requestName, subject, body, statsEngine, next, protocol))
-}
+import scala.concurrent.ExecutionContext
+import scala.util.{Failure => TFailure, Success => TSuccess}
 
-class SmtpAction(requestName: String,
-                  subject: String,
-                  body: String,
-                  val statsEngine: StatsEngine,
-                  val next: Action,
-                  protocol: SmtpProtocol) extends ChainableAction with Actor {
+class SmtpAction(val clock: Clock,
+                 val statsEngine: StatsEngine,
+                 val next: Action,
+                 requestName: String,
+                 subject: String,
+                 body: String,
+                 protocol: SmtpProtocol) extends RequestAction {
 
-  val smtpHandler = context.actorOf(SmtpHandler.props())
+  override val name: String = "sendMail"
 
-  val name = "sendMail"
+  override def requestName: Expression[String] = _ => io.gatling.commons.validation.Success(requestName)
 
-  def execute(session: Session): Unit = {
-    smtpHandler ! generateSendMailRequest(session)
+  override def sendRequest(session: Session): Validation[Unit] = {
+    val start = clock.nowMillis
+    for {
+      username <- session(UserFeeder.usernameSessionParam).validate[String]
+      password <- session(UserFeeder.passwordSessionParam).validate[String]
+    } yield {
+      val baseMailer = Mailer(protocol.host, protocol.port).startTls(protocol.ssl).trustAll(true)
+      val mailer = credentials(protocol, username, password)
+        .map(creds => baseMailer.auth(true).as(creds._1, creds._2))
+        .getOrElse(baseMailer.auth(false))()
+
+      val envelope = Envelope.from(new InternetAddress(username))
+        .to(new InternetAddress(username))
+        .subject(subject)
+        .content(Text(body))
+
+      mailer(envelope)(ExecutionContext.global).onComplete {
+        case TSuccess(_) => ok(session, start)
+        case TFailure(e) =>
+          logger.error("Exception caught while sending mail", e)
+          ko(session, start, e.getMessage)
+      }(ExecutionContext.global)
+    }
   }
 
-  private def generateSendMailRequest(session: Session) = {
-    def readSession(variableName: String) = session(variableName).as[String]
-    SendMailRequest(session = session,
-      host = protocol.host,
-      port = protocol.port,
-      ssl = protocol.ssl,
-      from = readSession(UserFeeder.usernameSessionParam),
-      to = readSession(UserFeeder.usernameSessionParam),
-      subject = subject,
-      body = body,
-      credentials = provideCredentialsIfNeeded(readSession)(protocol))
+  // ponytail: preserve the original auth semantics where auth=false sends the user's
+  // credentials (the default "NoAuthentication" scenario still authenticates).
+  private def credentials(protocol: SmtpProtocol, username: String, password: String): Option[(String, String)] =
+    if (protocol.auth) None else Some((username, password))
+
+  private def ok(session: Session, start: Long): Unit = {
+    statsEngine.logResponse(session.scenario, session.groups, requestName, start, clock.nowMillis, OK, None, None)
+    next ! session
   }
 
-  override def receive: Receive = {
-    case session: Session => execute(session)
-    case executionReport: ExecutionReport =>
-      statsEngine.logResponse(executionReport.session.scenario, executionReport.session.groups, requestName, executionReport.responseTimings.startTimestamp, executionReport.responseTimings.endTimestamp,
-        executionReport.status, None, executionReport.errorMessage)
-      next ! executionReport.session
-    case msg => logger.error(s"Unexpected message $msg")
-  }
-
-  def provideCredentialsIfNeeded(sessionReader: String => String)(protocol: SmtpProtocol): Option[Credentials] = {
-    if (protocol.auth) None
-    else Some(Credentials(sessionReader(UserFeeder.usernameSessionParam), sessionReader(UserFeeder.passwordSessionParam)))
+  private def ko(session: Session, start: Long, message: String): Unit = {
+    statsEngine.logResponse(session.scenario, session.groups, requestName, start, clock.nowMillis, KO, None, Some(message))
+    next ! session.markAsFailed
   }
 }

@@ -1,6 +1,5 @@
 package org.apache.james.gatling.smtp
 
-import com.linagora.gatling.imap.action.ExitableActorDelegatingAction
 import io.gatling.core.action.Action
 import io.gatling.core.action.builder.ActionBuilder
 import io.gatling.core.structure.ScenarioContext
@@ -18,8 +17,7 @@ case class SmtpActionBuilder(requestName: String,
   override def build(ctx: ScenarioContext, next: Action): Action = {
     val components: SmtpComponents = ctx.protocolComponentsRegistry.components(SmtpProtocol.SmtpProtocolKey)
 
-    val smtpProps = SmtpAction.props(requestName, _subject, _body, ctx.coreComponents.statsEngine, next, components.protocol)
-    val actionActor = ctx.coreComponents.actorSystem.actorOf(smtpProps)
-    new ExitableActorDelegatingAction(genName(requestName), ctx.coreComponents.statsEngine, ctx.coreComponents.clock, next, actionActor)
+    new SmtpAction(ctx.coreComponents.clock, ctx.coreComponents.statsEngine, next,
+      genName(requestName), _subject, _body, components.protocol)
   }
 }
