@@ -47,4 +47,4 @@ enablePlugins(GatlingPlugin)
 // ponytail: gatling-imap is consumed from its upgrade-gatling-3.13.5 branch (PR linagora/gatling-imap#86)
 // rather than vendored here. That branch adapts gatling-imap to Gatling 3.13.x (drops Akka actors
 // in favour of async imapnio futures).
-lazy val gatlingImap = ProjectRef(uri("https://github.com/linagora/gatling-imap.git#upgrade-gatling-3.13.5"), "gatling-imap")
+lazy val gatlingImap = ProjectRef(uri("https://github.com/linagora/gatling-imap.git"), "gatling-imap")
